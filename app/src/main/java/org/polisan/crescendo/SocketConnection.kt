@@ -12,6 +12,8 @@ import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class SocketConnection(
     private val ipAddress: String,
@@ -24,11 +26,18 @@ class SocketConnection(
     private var isConnectionClosed = false
     private var serverAlive = true
 
+
+
     init {
         GlobalScope.launch(Dispatchers.IO) {
 
             connect()
         }
+    }
+
+    fun htonl(value: Int): Int {
+        return ByteBuffer.allocate(4).putInt(value)
+            .order(ByteOrder.nativeOrder()).getInt(0)
     }
 
     private suspend fun connect() {
@@ -65,7 +74,7 @@ class SocketConnection(
                     }
 
                     try {
-                        sendByte(0)
+                        sendInt(0)
                     } catch (e: Exception) {
                         Log.e("SOCKET", "Exception: ${e.message}")
                         e.printStackTrace()
@@ -92,9 +101,7 @@ class SocketConnection(
                             val response = responseBuilder.toString()
                             if (response.isNotEmpty()) {
                                 Log.d("SOCKET", "Received response: $response")
-                                // Perform any desired processing with the response
-
-                                // Reset the response builder
+                                connectionListener?.onNewInfo(response)
                                 responseBuilder.clear()
                             }
                         }
@@ -127,13 +134,20 @@ class SocketConnection(
         }
     }
 
-    fun sendByte(int: Int) {
+    fun sendInt(int: Int) {
         GlobalScope.launch(Dispatchers.IO) {
             try {
                 val dOut = DataOutputStream(socket.getOutputStream())
                 if(int != 0)
                   Log.d("SOCKET", "Sending int $int")
-                dOut.writeByte(int)
+                //dOut.writeInt(htonl(int))
+                val valueBytes = ByteArray(4)
+                val buffer = ByteBuffer.allocate(4)
+                buffer.order(ByteOrder.LITTLE_ENDIAN)
+                buffer.putInt(int)
+                System.arraycopy(buffer.array(), 0, valueBytes, 0, 4)
+                dOut.write(valueBytes)
+                Log.d("SOCKET", "valueBytes ${valueBytes.toString()}")
                 dOut.flush()
             } catch (e: SocketException) {
                 Log.e("SOCKET", "Exception: ${e.message}")
@@ -170,4 +184,6 @@ class SocketConnection(
     fun isServerAlive(): Boolean {
         return serverAlive
     }
+
+
 }
