@@ -35,11 +35,6 @@ class SocketConnection(
         }
     }
 
-    fun htonl(value: Int): Int {
-        return ByteBuffer.allocate(4).putInt(value)
-            .order(ByteOrder.nativeOrder()).getInt(0)
-    }
-
     private suspend fun connect() {
         try {
             try {
@@ -140,14 +135,12 @@ class SocketConnection(
                 val dOut = DataOutputStream(socket.getOutputStream())
                 if(int != 0)
                   Log.d("SOCKET", "Sending int $int")
-                //dOut.writeInt(htonl(int))
                 val valueBytes = ByteArray(4)
                 val buffer = ByteBuffer.allocate(4)
                 buffer.order(ByteOrder.LITTLE_ENDIAN)
                 buffer.putInt(int)
                 System.arraycopy(buffer.array(), 0, valueBytes, 0, 4)
                 dOut.write(valueBytes)
-                Log.d("SOCKET", "valueBytes ${valueBytes.toString()}")
                 dOut.flush()
             } catch (e: SocketException) {
                 Log.e("SOCKET", "Exception: ${e.message}")

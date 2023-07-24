@@ -1,7 +1,6 @@
 package org.polisan.crescendo
 
 import SocketConnection
-import android.annotation.SuppressLint
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Bundle
@@ -12,9 +11,11 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Repeat
@@ -22,19 +23,27 @@ import androidx.compose.material.icons.rounded.RepeatOn
 import androidx.compose.material.icons.rounded.RepeatOneOn
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.ShuffleOn
+import androidx.compose.material.icons.rounded.Speaker
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ProgressIndicatorDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.polisan.crescendo.ui.theme.CrescendoTheme
@@ -57,11 +67,10 @@ interface ConnectionListener {
     fun onNewInfo(info: String)
 }
 
-private fun parseData(input: String): Map<String, String>? {
+private fun parseData(input: String): Map<String, String> {
     val dataMap: MutableMap<String, String> = HashMap()
 
     val pairs = input.split("||")
-        .filter { it.isNotBlank() }
         .toTypedArray()
 
     var i = 0
@@ -73,6 +82,27 @@ private fun parseData(input: String): Map<String, String>? {
     }
     return dataMap
 }
+
+private fun parsePlayerInfo(input: String): Pair<Int, List<Pair<String, String>>> {
+    val players = mutableListOf<Pair<String, String>>()
+    Log.d("PARSE", "Starting parsing player info. input: $input")
+    val items = input.split("||")
+    var index = -1
+    // Ensure that the number of items is at least 3 (index + player name + player interface)
+    Log.d("PARSE", "Items: $items")
+    if (items.size >= 3) {
+        index = items[0].toInt()
+        for (i in 1 until items.size - 1 step 2) {
+            val playerName = items[i]
+            val playerInterface = items[i + 1]
+            players.add(playerName to playerInterface)
+        }
+    }
+    Log.d("PARSE", "Index fetched: $index")
+    Log.d("PARSE", "Players fetched: $players")
+    return index to players
+}
+
 
 private fun convertTimeStringToSeconds(timeString: String): Int {
     val parts = timeString.split(":")
@@ -104,7 +134,6 @@ private fun calculatePositionPercentage(positionSeconds: Int, lengthSeconds: Int
 }
 
 
-
 class MainActivity : ComponentActivity(), ConnectionListener {
     val isConnected = mutableStateOf(false)
     var connection: SocketConnection? = null
@@ -117,17 +146,26 @@ class MainActivity : ComponentActivity(), ConnectionListener {
     var isShuffle = mutableStateOf(false)
     var repeatStatus = mutableStateOf(-1)
     var isPlaying = mutableStateOf(true)
-    var playPauseIcon = mutableStateOf(if (isPlaying.value) Icons.Rounded.Pause else Icons.Rounded.PlayArrow)
-    var shuffleIcon = mutableStateOf(if (isShuffle.value) Icons.Rounded.ShuffleOn else Icons.Rounded.Shuffle)
+    var playPauseIcon =
+        mutableStateOf(if (isPlaying.value) Icons.Rounded.Pause else Icons.Rounded.PlayArrow)
+    var shuffleIcon =
+        mutableStateOf(if (isShuffle.value) Icons.Rounded.ShuffleOn else Icons.Rounded.Shuffle)
     var repeatIcon = mutableStateOf(
-        when(repeatStatus.value) {
+        when (repeatStatus.value) {
             0 -> Icons.Rounded.Repeat
             1 -> Icons.Rounded.RepeatOn
             2 -> Icons.Rounded.RepeatOneOn
-            else -> {Icons.Rounded.Repeat}
+            else -> {
+                Icons.Rounded.Repeat
+            }
         }
     )
     var updatePosition = true
+
+    var currentPlayer = -1
+    var playersList = mutableStateOf(emptyList<Pair<String, String>>())
+    var isBottomSheetOpen = mutableStateOf(false)
+
 
     suspend fun scanLocalNetworkAndConnect(port: Int): SocketConnection? {
         val connectivityManager =
@@ -169,6 +207,8 @@ class MainActivity : ComponentActivity(), ConnectionListener {
         return null
     }
 
+
+    @ExperimentalMaterial3Api
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         connectToSocket()
@@ -202,9 +242,33 @@ class MainActivity : ComponentActivity(), ConnectionListener {
 
     override fun onNewInfo(info: String) {
         Log.d("SOCKET", "Starting parsing info")
-        val dataMap = parseData(info)
+        try {
+            val status = info[0].digitToInt()
+            Log.d("PARSE", "$status")
+            when (status) {
+                8 -> {
+                    Log.d("PARSE", "Start parse player info")
+                    val dataMap = parsePlayerInfo(info.substring(3))
+                    Log.d("PARSE", "dataMap: $dataMap")
 
-        if (dataMap != null) {
+                    dataMap.second.forEach { (playerName, playerInterface) ->
+                        Log.d("PARSE", "Player: $playerName, Interface: $playerInterface")
+                    }
+                    //spawn bottom sheet with radiobuttons with players names and confirm button
+
+                    currentPlayer = dataMap.first
+                    playersList.value = dataMap.second
+                    isBottomSheetOpen.value = true
+                    Log.d("PARSE", "Playerlist: ${playersList.value}")
+                    Log.d("PARSE", "is open: ${isBottomSheetOpen.value}")
+
+
+                }
+            }
+        } catch (ex: java.lang.IllegalArgumentException) { //If passed not with status
+
+            val dataMap = parseData(info)
+
             for ((key, value) in dataMap) {
                 println("$key: $value")
                 when (key) {
@@ -216,33 +280,41 @@ class MainActivity : ComponentActivity(), ConnectionListener {
                     "shuffle" -> isShuffle.value = value == "1"
                     "repeat" -> repeatStatus.value = value.toInt()
                     "playing" -> isPlaying.value = value == "1"
+
                 }
             }
-        } else {
-            Log.d("SOCKET", "Datamap is null")
-        }
-        Log.e("SOCKET", "isPlaying: ${isPlaying.value}")
-        var positionSeconds = convertTimeStringToSeconds(position.value)
-        var lengthSeconds = convertTimeStringToSeconds(length.value)
-        playPauseIcon.value = if (isPlaying.value) Icons.Rounded.Pause else Icons.Rounded.PlayArrow
-        shuffleIcon.value = if (isShuffle.value) Icons.Rounded.ShuffleOn else Icons.Rounded.Shuffle
-        repeatIcon.value = when(repeatStatus.value) {
+            Log.e("SOCKET", "isPlaying: ${isPlaying.value}")
+            var positionSeconds = convertTimeStringToSeconds(position.value)
+            var lengthSeconds = convertTimeStringToSeconds(length.value)
+            playPauseIcon.value =
+                if (isPlaying.value) Icons.Rounded.Pause else Icons.Rounded.PlayArrow
+            shuffleIcon.value =
+                if (isShuffle.value) Icons.Rounded.ShuffleOn else Icons.Rounded.Shuffle
+            repeatIcon.value = when (repeatStatus.value) {
                 0 -> Icons.Rounded.Repeat
                 1 -> Icons.Rounded.RepeatOn
                 2 -> Icons.Rounded.RepeatOneOn
-                else -> {Icons.Rounded.Repeat}
+                else -> {
+                    Icons.Rounded.Repeat
+                }
             }
-        if(updatePosition)
-            positionPercentage = calculatePositionPercentage(positionSeconds, lengthSeconds)
+            if (updatePosition)
+                positionPercentage = calculatePositionPercentage(positionSeconds, lengthSeconds)
+        } catch (ex: Exception) {
+            Log.e("PARSE", "Error: $ex")
+        }
+
     }
 }
 
-@SuppressLint("SuspiciousIndentation")
 @Composable
+@ExperimentalMaterial3Api
 fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
     val mainActivity = remember(lifecycleOwner) {
         lifecycleOwner as MainActivity
     }
+
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier.padding(16.dp),
@@ -260,6 +332,34 @@ fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
                 mainActivity.shuffleIcon.value,
                 mainActivity.repeatIcon.value
             )
+
+            if (mainActivity.isBottomSheetOpen.value) {
+                var bottomSheetState = rememberModalBottomSheetState()
+                PlayerSelectionBottomSheet(
+                    players = mainActivity.playersList.value,
+                    onPlayerSelected = { playerID ->
+                        Log.d("PARSE", "SELECTED PLAYER: $playerID")
+                        scope.launch {
+                            bottomSheetState.hide()
+                        }.invokeOnCompletion {
+                            mainActivity.isBottomSheetOpen.value =
+                                false
+                        }
+                        mainActivity.connection?.sendInt(("9$playerID").toInt())
+                    },
+                    onDismissClick = {
+                        scope.launch {
+                            bottomSheetState.hide()
+                        }.invokeOnCompletion {
+                            mainActivity.isBottomSheetOpen.value =
+                                false
+                        }
+                    },
+                    state = bottomSheetState,
+                    currentPlayer = mainActivity.currentPlayer
+                )
+            }
+
         } else {
             ConnectButton(onConnect = { mainActivity.connectToSocket() })
         }
@@ -267,7 +367,17 @@ fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
 }
 
 @Composable
-fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String, position: String, positionPercentage: Float, length: String, playPauseIcon: ImageVector, shuffleIcon: ImageVector, repeatIcon: ImageVector) {
+fun PlayerControls(
+    lifecycleOwner: LifecycleOwner,
+    artist: String,
+    title: String,
+    position: String,
+    positionPercentage: Float,
+    length: String,
+    playPauseIcon: ImageVector,
+    shuffleIcon: ImageVector,
+    repeatIcon: ImageVector
+) {
     var mainActivity = remember(lifecycleOwner) {
         lifecycleOwner as MainActivity
     }
@@ -281,7 +391,7 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
             .background(MaterialTheme.colorScheme.background)
             .fillMaxHeight(),
 
-    ) {
+        ) {
         Column(Modifier.padding(vertical = 8.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -302,14 +412,15 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                 onValueChange = {
                     mainActivity.updatePosition = false
                     mainActivity.positionPercentage = it
-                                },
+                },
                 onValueChangeFinished = {
-                    val newPos = (convertTimeStringToSeconds(length) * mainActivity.positionPercentage).toInt()
+                    val newPos =
+                        (convertTimeStringToSeconds(length) * mainActivity.positionPercentage).toInt()
                     val toSend = "7$newPos".toInt()
                     Log.e("SOCKET", "SENDING $toSend")
                     mainActivity.connection?.sendInt(toSend)
                     mainActivity.updatePosition = true
-                                        },
+                },
                 //color = MaterialTheme.colorScheme.primary,
                 //trackColor = MaterialTheme.colorScheme.inversePrimary
 
@@ -323,6 +434,17 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
             ) {
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
+                        mainActivity.connection?.sendInt(8) //get and choose player
+
+                }) {
+                    Icon(
+                        Icons.Rounded.Speaker,
+                        contentDescription = "ChoosePlayer"
+                    )
+                }
+                Spacer(modifier = Modifier.width(5.dp))
+                IconButton(onClick = {
+                    if (mainActivity.connection?.isConnected() == true)
                         mainActivity.connection?.sendInt(5) //toggle shuffle
                 }) {
                     Icon(
@@ -330,7 +452,7 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                         contentDescription = "Shuffle"
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
                         mainActivity.connection?.sendInt(1)
@@ -340,7 +462,6 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                         contentDescription = "Previous"
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
                         mainActivity.connection?.sendInt(2)
@@ -350,7 +471,6 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                         contentDescription = "Play/Pause"
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
                         mainActivity.connection?.sendInt(3)
@@ -360,7 +480,7 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                         contentDescription = "Next"
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
                         mainActivity.connection?.sendInt(6) //toggle repeat
@@ -370,9 +490,21 @@ fun PlayerControls(lifecycleOwner: LifecycleOwner, artist: String, title: String
                         contentDescription = "Repeat"
                     )
                 }
+                IconButton(onClick = {
+                    if (mainActivity.connection?.isConnected() == true)
+                        mainActivity.connection?.sendInt(9) //Choose output device
+                }) {
+                    Icon(
+                        Icons.Rounded.Headphones,
+                        contentDescription = "ChooseOutputDevice"
+                    )
+                }
+
             }
         }
     }
+
+
 }
 
 @Composable
@@ -381,9 +513,81 @@ fun ConnectButton(onConnect: () -> Unit) {
         modifier = Modifier
             .background(MaterialTheme.colorScheme.background)
             .fillMaxSize(),
-        ) {
+    ) {
         Button(onClick = onConnect) {
             Text(text = "Connect")
         }
     }
 }
+
+@Composable
+@ExperimentalMaterial3Api
+fun PlayerSelectionBottomSheet(
+    players: List<Pair<String, String>>,
+    onPlayerSelected: (Int) -> Unit,
+    onDismissClick: () -> Unit,
+    state: SheetState,
+    currentPlayer: Int
+) {
+    var selectedPlayer by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var selectedIndex by remember { mutableStateOf(currentPlayer) }
+
+    ModalBottomSheet(
+        sheetState = state,
+        content = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = "Select Player",
+                    style = MaterialTheme.typography.headlineLarge,
+                    modifier = Modifier
+                        .padding(bottom = 16.dp)
+                        .align(Alignment.CenterHorizontally)
+                )
+
+                Column {
+                    players.forEachIndexed { index, (playerName, _) ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp)
+                                .selectable(index == selectedIndex, onClick = {
+                                    selectedPlayer = players[index]
+                                    selectedIndex = index
+                                })
+                        ) {
+                            RadioButton(
+                                selected = index == selectedIndex,
+                                onClick = {
+                                    selectedPlayer = players[index]
+                                    selectedIndex = index
+                                },
+                                modifier = Modifier.align(Alignment.CenterVertically)
+                            )
+                            Text(
+                                text = playerName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 8.dp).align(Alignment.CenterVertically)
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = {
+                            selectedPlayer?.let { onPlayerSelected(selectedIndex) }
+                        },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text(text = "Confirm")
+                    }
+                }
+            }
+        },
+        onDismissRequest = {
+            onDismissClick()
+        },
+    )
+}
+
