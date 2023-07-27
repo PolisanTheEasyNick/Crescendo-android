@@ -69,7 +69,7 @@ class SocketConnection(
                     }
 
                     try {
-                        sendInt(0)
+                        sendString("0")
                     } catch (e: Exception) {
                         Log.e("SOCKET", "Exception: ${e.message}")
                         e.printStackTrace()
@@ -118,7 +118,7 @@ class SocketConnection(
             try {
                 val dOut = DataOutputStream(socket.getOutputStream())
                 Log.d("SOCKET", "Sending message $message")
-                dOut.writeUTF(message)
+                dOut.write(message.toByteArray())
                 dOut.flush()
             } catch (e: SocketException) {
                 Log.e("SOCKET", "Exception: ${e.message}")

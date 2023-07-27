@@ -10,14 +10,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOn
 import androidx.compose.material.icons.rounded.RepeatOneOn
@@ -39,7 +48,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,7 +60,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.polisan.crescendo.ui.theme.CrescendoTheme
@@ -83,24 +90,23 @@ private fun parseData(input: String): Map<String, String> {
     return dataMap
 }
 
-private fun parsePlayerInfo(input: String): Pair<Int, List<Pair<String, String>>> {
-    val players = mutableListOf<Pair<String, String>>()
+private fun parseList(input: String): Pair<Int, List<Pair<String, String>>> {
+    val elements = mutableListOf<Pair<String, String>>()
     Log.d("PARSE", "Starting parsing player info. input: $input")
     val items = input.split("||")
     var index = -1
-    // Ensure that the number of items is at least 3 (index + player name + player interface)
     Log.d("PARSE", "Items: $items")
     if (items.size >= 3) {
         index = items[0].toInt()
         for (i in 1 until items.size - 1 step 2) {
-            val playerName = items[i]
-            val playerInterface = items[i + 1]
-            players.add(playerName to playerInterface)
+            val element = items[i]
+            val id = items[i + 1]
+            elements.add(element to id)
         }
     }
     Log.d("PARSE", "Index fetched: $index")
-    Log.d("PARSE", "Players fetched: $players")
-    return index to players
+    Log.d("PARSE", "Elements fetched: $elements")
+    return index to elements
 }
 
 
@@ -162,12 +168,13 @@ class MainActivity : ComponentActivity(), ConnectionListener {
     )
     var updatePosition = true
 
-    var currentPlayer = -1
-    var playersList = mutableStateOf(emptyList<Pair<String, String>>())
+    var currentElement = -1
+    var elementList = mutableStateOf(emptyList<Pair<String, String>>())
     var isBottomSheetOpen = mutableStateOf(false)
+    var isChoosingPlayer = mutableStateOf(false) //whether need to spawn bottom sheet for players or for output devices
 
 
-    suspend fun scanLocalNetworkAndConnect(port: Int): SocketConnection? {
+    private suspend fun scanLocalNetworkAndConnect(port: Int): SocketConnection? {
         val connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         var baseIp: String
@@ -197,7 +204,9 @@ class MainActivity : ComponentActivity(), ConnectionListener {
                     } finally {
                         // Close the socket if it was opened but not connected
                         if (!socket.isConnected) {
-                            socket.close()
+                            withContext(Dispatchers.IO) {
+                                socket.close()
+                            }
                         }
                     }
 
@@ -231,7 +240,7 @@ class MainActivity : ComponentActivity(), ConnectionListener {
 
     override fun onConnectionSuccess() {
         isConnected.value = true
-        connection?.sendInt(4)
+        connection?.sendString("4")
     }
 
     override fun onConnectionLost() {
@@ -247,22 +256,36 @@ class MainActivity : ComponentActivity(), ConnectionListener {
             Log.d("PARSE", "$status")
             when (status) {
                 8 -> {
-                    Log.d("PARSE", "Start parse player info")
-                    val dataMap = parsePlayerInfo(info.substring(3))
+                    Log.d("PARSE", "Start parse players info")
+                    val dataMap = parseList(info.substring(3))
                     Log.d("PARSE", "dataMap: $dataMap")
 
                     dataMap.second.forEach { (playerName, playerInterface) ->
                         Log.d("PARSE", "Player: $playerName, Interface: $playerInterface")
                     }
-                    //spawn bottom sheet with radiobuttons with players names and confirm button
 
-                    currentPlayer = dataMap.first
-                    playersList.value = dataMap.second
+                    currentElement = dataMap.first
+                    elementList.value = dataMap.second
                     isBottomSheetOpen.value = true
-                    Log.d("PARSE", "Playerlist: ${playersList.value}")
+                    isChoosingPlayer.value = true
+                    Log.d("PARSE", "Playerlist: ${elementList.value}")
                     Log.d("PARSE", "is open: ${isBottomSheetOpen.value}")
+                }
+                9 -> {
+                    Log.d("PARSE", "Start parse devices info")
+                    val dataMap = parseList(info.substring(3))
+                    Log.d("PARSE", "dataMap: $dataMap")
 
+                    dataMap.second.forEach { (deviceName, deviceSinkID) ->
+                        Log.d("PARSE", "Device: $deviceName, Sink id: $deviceSinkID")
+                    }
 
+                    currentElement = dataMap.first
+                    elementList.value = dataMap.second
+                    isBottomSheetOpen.value = true
+                    isChoosingPlayer.value = false
+                    Log.d("PARSE", "DeviceList: ${elementList.value}")
+                    Log.d("PARSE", "is open: ${isBottomSheetOpen.value}")
                 }
             }
         } catch (ex: java.lang.IllegalArgumentException) { //If passed not with status
@@ -284,8 +307,8 @@ class MainActivity : ComponentActivity(), ConnectionListener {
                 }
             }
             Log.e("SOCKET", "isPlaying: ${isPlaying.value}")
-            var positionSeconds = convertTimeStringToSeconds(position.value)
-            var lengthSeconds = convertTimeStringToSeconds(length.value)
+            val positionSeconds = convertTimeStringToSeconds(position.value)
+            val lengthSeconds = convertTimeStringToSeconds(length.value)
             playPauseIcon.value =
                 if (isPlaying.value) Icons.Rounded.Pause else Icons.Rounded.PlayArrow
             shuffleIcon.value =
@@ -333,11 +356,11 @@ fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
                 mainActivity.repeatIcon.value
             )
 
-            if (mainActivity.isBottomSheetOpen.value) {
-                var bottomSheetState = rememberModalBottomSheetState()
-                PlayerSelectionBottomSheet(
-                    players = mainActivity.playersList.value,
-                    onPlayerSelected = { playerID ->
+            if (mainActivity.isBottomSheetOpen.value && mainActivity.isChoosingPlayer.value) {
+                val bottomSheetState = rememberModalBottomSheetState()
+                SelectionBottomSheet(
+                    elements = mainActivity.elementList.value,
+                    onSelected = { playerID ->
                         Log.d("PARSE", "SELECTED PLAYER: $playerID")
                         scope.launch {
                             bottomSheetState.hide()
@@ -345,7 +368,7 @@ fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
                             mainActivity.isBottomSheetOpen.value =
                                 false
                         }
-                        mainActivity.connection?.sendInt(("9$playerID").toInt())
+                        mainActivity.connection?.sendString("9||$playerID")
                     },
                     onDismissClick = {
                         scope.launch {
@@ -356,7 +379,34 @@ fun MediaPlayerScreen(lifecycleOwner: LifecycleOwner) {
                         }
                     },
                     state = bottomSheetState,
-                    currentPlayer = mainActivity.currentPlayer
+                    chosenIndex = mainActivity.currentElement,
+                    selectText = "Choose Player"
+                )
+            } else if(mainActivity.isBottomSheetOpen.value) {
+                val bottomSheetState = rememberModalBottomSheetState()
+                SelectionBottomSheet(
+                    elements = mainActivity.elementList.value,
+                    onSelected = { sinkID ->
+                        Log.d("PARSE", "SELECTED DEVICE: $sinkID")
+                        scope.launch {
+                            bottomSheetState.hide()
+                        }.invokeOnCompletion {
+                            mainActivity.isBottomSheetOpen.value =
+                                false
+                        }
+                        mainActivity.connection?.sendString("11||$sinkID")
+                    },
+                    onDismissClick = {
+                        scope.launch {
+                            bottomSheetState.hide()
+                        }.invokeOnCompletion {
+                            mainActivity.isBottomSheetOpen.value =
+                                false
+                        }
+                    },
+                    state = bottomSheetState,
+                    chosenIndex = mainActivity.currentElement,
+                    selectText = "Choose Device"
                 )
             }
 
@@ -378,7 +428,7 @@ fun PlayerControls(
     shuffleIcon: ImageVector,
     repeatIcon: ImageVector
 ) {
-    var mainActivity = remember(lifecycleOwner) {
+    val mainActivity = remember(lifecycleOwner) {
         lifecycleOwner as MainActivity
     }
 
@@ -416,13 +466,11 @@ fun PlayerControls(
                 onValueChangeFinished = {
                     val newPos =
                         (convertTimeStringToSeconds(length) * mainActivity.positionPercentage).toInt()
-                    val toSend = "7$newPos".toInt()
+                    val toSend = "7||$newPos"
                     Log.e("SOCKET", "SENDING $toSend")
-                    mainActivity.connection?.sendInt(toSend)
+                    mainActivity.connection?.sendString(toSend)
                     mainActivity.updatePosition = true
                 },
-                //color = MaterialTheme.colorScheme.primary,
-                //trackColor = MaterialTheme.colorScheme.inversePrimary
 
             )
             Row(
@@ -434,7 +482,7 @@ fun PlayerControls(
             ) {
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(8) //get and choose player
+                        mainActivity.connection?.sendString("8") //get and choose player
 
                 }) {
                     Icon(
@@ -445,7 +493,7 @@ fun PlayerControls(
                 Spacer(modifier = Modifier.width(5.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(5) //toggle shuffle
+                        mainActivity.connection?.sendString("5") //toggle shuffle
                 }) {
                     Icon(
                         shuffleIcon,
@@ -455,7 +503,7 @@ fun PlayerControls(
                 Spacer(modifier = Modifier.width(5.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(1)
+                        mainActivity.connection?.sendString("1")
                 }) {
                     Icon(
                         Icons.Rounded.ArrowBack,
@@ -464,7 +512,7 @@ fun PlayerControls(
                 }
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(2)
+                        mainActivity.connection?.sendString("2")
                 }) {
                     Icon(
                         playPauseIcon,
@@ -473,7 +521,7 @@ fun PlayerControls(
                 }
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(3)
+                        mainActivity.connection?.sendString("3")
                 }) {
                     Icon(
                         Icons.Rounded.ArrowForward,
@@ -483,7 +531,7 @@ fun PlayerControls(
                 Spacer(modifier = Modifier.width(5.dp))
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(6) //toggle repeat
+                        mainActivity.connection?.sendString("6") //toggle repeat
                 }) {
                     Icon(
                         repeatIcon,
@@ -492,7 +540,7 @@ fun PlayerControls(
                 }
                 IconButton(onClick = {
                     if (mainActivity.connection?.isConnected() == true)
-                        mainActivity.connection?.sendInt(9) //Choose output device
+                        mainActivity.connection?.sendString("10") //Choose output device
                 }) {
                     Icon(
                         Icons.Rounded.Headphones,
@@ -522,15 +570,16 @@ fun ConnectButton(onConnect: () -> Unit) {
 
 @Composable
 @ExperimentalMaterial3Api
-fun PlayerSelectionBottomSheet(
-    players: List<Pair<String, String>>,
-    onPlayerSelected: (Int) -> Unit,
+fun SelectionBottomSheet(
+    elements: List<Pair<String, String>>,
+    onSelected: (Int) -> Unit,
     onDismissClick: () -> Unit,
     state: SheetState,
-    currentPlayer: Int
+    chosenIndex: Int,
+    selectText: String
 ) {
-    var selectedPlayer by remember { mutableStateOf<Pair<String, String>?>(null) }
-    var selectedIndex by remember { mutableStateOf(currentPlayer) }
+    var selectedElement by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var selectedIndex by remember { mutableStateOf(chosenIndex) }
 
     ModalBottomSheet(
         sheetState = state,
@@ -541,7 +590,7 @@ fun PlayerSelectionBottomSheet(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "Select Player",
+                    text = selectText,
                     style = MaterialTheme.typography.headlineLarge,
                     modifier = Modifier
                         .padding(bottom = 16.dp)
@@ -549,20 +598,26 @@ fun PlayerSelectionBottomSheet(
                 )
 
                 Column {
-                    players.forEachIndexed { index, (playerName, _) ->
+                    elements.forEachIndexed { index, (playerName, _) ->
+                        var sinkID = -1
+                        try {
+                            sinkID = elements[index].second.toInt()
+                        } catch(ex: NumberFormatException) {
+                            sinkID = -1 //means indexing players, not devices
+                        }
                         Row(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(bottom = 8.dp)
-                                .selectable(index == selectedIndex, onClick = {
-                                    selectedPlayer = players[index]
+                                .selectable(index == selectedIndex || selectedIndex == sinkID, onClick = {
+                                    selectedElement = elements[index]
                                     selectedIndex = index
                                 })
                         ) {
                             RadioButton(
-                                selected = index == selectedIndex,
+                                selected = index == selectedIndex || selectedIndex == sinkID,
                                 onClick = {
-                                    selectedPlayer = players[index]
+                                    selectedElement = elements[index]
                                     selectedIndex = index
                                 },
                                 modifier = Modifier.align(Alignment.CenterVertically)
@@ -576,7 +631,9 @@ fun PlayerSelectionBottomSheet(
                     }
                     Button(
                         onClick = {
-                            selectedPlayer?.let { onPlayerSelected(selectedIndex) }
+                            if(selectText == "Choose Player")
+                            selectedElement?.let { onSelected(selectedIndex) }
+                            else selectedElement?.let { onSelected(elements[selectedIndex].second.toInt()) }
                         },
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) {
