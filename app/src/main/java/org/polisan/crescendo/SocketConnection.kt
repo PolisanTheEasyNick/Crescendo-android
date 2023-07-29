@@ -1,6 +1,6 @@
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,11 +26,11 @@ class SocketConnection(
     private var isConnectionClosed = false
     private var serverAlive = true
 
+    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.IO)
 
 
     init {
-        GlobalScope.launch(Dispatchers.IO) {
-
+        coroutineScope.launch {
             connect()
         }
     }
@@ -58,7 +58,7 @@ class SocketConnection(
             connectionListener?.onConnectionSuccess()
 
             // Launch the connection checker coroutine
-            GlobalScope.launch(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.IO) {
                 while (!socket.isClosed) {
                     if (socket.isClosed || !socket.isConnected) {
                         Log.e("SOCKET", "Connection to $ipAddress:$port lost.")
@@ -79,7 +79,7 @@ class SocketConnection(
                 }
             }
 // Launch the response waiting coroutine
-            GlobalScope.launch(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.IO) {
                 val buffer = CharArray(1024)
                 val responseBuilder = StringBuilder()
 
@@ -114,7 +114,7 @@ class SocketConnection(
     }
 
     fun sendString(message: String) {
-        GlobalScope.launch(Dispatchers.IO) {
+        coroutineScope.launch(Dispatchers.IO) {
             try {
                 val dOut = DataOutputStream(socket.getOutputStream())
                 Log.d("SOCKET", "Sending message $message")
@@ -130,7 +130,7 @@ class SocketConnection(
     }
 
     fun sendInt(int: Int) {
-        GlobalScope.launch(Dispatchers.IO) {
+        coroutineScope.launch(Dispatchers.IO) {
             try {
                 val dOut = DataOutputStream(socket.getOutputStream())
                 if(int != 0)
@@ -160,7 +160,7 @@ class SocketConnection(
     }
 
     fun disconnect() {
-        GlobalScope.launch(Dispatchers.IO) {
+        coroutineScope.launch(Dispatchers.IO) {
             try {
                 reader?.close()
                 socket.close()
